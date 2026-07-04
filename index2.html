@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="uk">
+<head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#050f05">
@@ -145,7 +146,7 @@ html,body{height:100%;background:url('IMG_7885.PNG') center/cover no-repeat fixe
 }
 
 /* ══ DISPLAY (TV) MODE — fullscreen, fluid sizing ══════════════════ */
-.tvroot{height:100vh;width:100vw;position:fixed;inset:0;background:linear-gradient(160deg,rgba(4,14,4,.94) 0%,rgba(9,38,9,.9) 50%,rgba(4,14,4,.94) 100%);display:flex;flex-direction:column;color:#fff;overflow:hidden}
+.tvroot{height:100vh;height:100dvh;width:100vw;position:fixed;inset:0;background:linear-gradient(160deg,rgba(4,14,4,.94) 0%,rgba(9,38,9,.9) 50%,rgba(4,14,4,.94) 100%);display:flex;flex-direction:column;color:#fff;overflow:hidden}
 .tvhdr{display:flex;justify-content:space-between;align-items:center;padding:1.2vh 2.5vw;background:rgba(0,0,0,.35);backdrop-filter:blur(16px);border-bottom:1px solid var(--glass-bd);flex-shrink:0}
 .tvhdr span{font-size:clamp(14px,1.6vw,30px);font-weight:700;letter-spacing:.6px}
 .tvq{margin:1.6vh 2.5vw 1vh;padding:2.2vh 2.5vw;background:var(--glass);backdrop-filter:blur(18px);border:1px solid rgba(245,197,24,.45);border-radius:1.6vw;text-align:center;font-weight:800;flex-shrink:0;display:flex;align-items:center;justify-content:center;min-height:11vh;box-shadow:0 0 40px rgba(245,197,24,.1),inset 0 1px 0 rgba(255,255,255,.08);letter-spacing:.3px;line-height:1.25}
@@ -155,6 +156,8 @@ html,body{height:100%;background:url('IMG_7885.PNG') center/cover no-repeat fixe
 .tvboard{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:1.1vh 1vw;min-width:0}
 .tvcard{border-radius:1.1vw;display:flex;align-items:center;padding:1vh 1.4vw;transition:transform .5s var(--ease),opacity .5s var(--ease),border-color .5s var(--ease),box-shadow .5s var(--ease),background-color .5s var(--ease);backdrop-filter:blur(12px);perspective:600px}
 </style>
+</head>
+<body>
 <div id="app"></div>
 <script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
 <script>
@@ -190,6 +193,7 @@ let revealed=new Map(),elim=new Set(),rs=[0,0,0,0];
 let rPhase='play',rq=[],overlayOn=false,notif=null,popIdx=null;
 let startTeam=0,displayOk=false,waitHost=true,splashKey=null;
 let nT,pT,eT,wrT,spT,nrT;
+let pingInt=null,rcVal='';
 
 // ── Transport: BroadcastChannel (same device) + MQTT (cross-device) ──
 const myId=Math.random().toString(36).slice(2,10);
@@ -241,7 +245,6 @@ function spawnConfetti(){
 }
 
 // ── Game Logic ─────────────────────────────────────────────────────
-function note(msg,type){if(nT)clearTimeout(nT);notif={msg,type};push();render();nT=setTimeout(()=>{notif=null;push();render();},3000);}
 function popAt(i){if(pT)clearTimeout(pT);popIdx=i;push();render();pT=setTimeout(()=>{popIdx=null;if(!overlayOn){push();render();}},1400);}
 function saveName(i){const e=document.getElementById('i'+i);if(e)names[i]=e.value||names[i];}
 function saveAll(){for(let i=0;i<4;i++)saveName(i);}
@@ -384,8 +387,10 @@ function chooseDisplay(){
 }
 function hostConnect(){
   const e=document.getElementById('rc');
-  if(!e||!/^\d{4}$/.test(e.value.trim())){alert('Введіть 4-значний код з екрану (ТВ)');return;}
-  setupMQ(e.value.trim(),()=>{send({t:'hello'});});
+  const code=(e?e.value:rcVal).trim();
+  if(!/^\d{4}$/.test(code)){alert('Введіть 4-значний код з екрану (ТВ)');return;}
+  rcVal=code;
+  setupMQ(code,()=>{send({t:'hello'});});
 }
 
 // ── Ambient bokeh stage layer: created once, survives all re-renders ──
@@ -593,7 +598,7 @@ function render(){
       <div style="color:var(--gold);font-size:1.6rem;text-align:center;margin-bottom:4px;font-weight:800">🎛️ Ведучий</div>
       <div style="margin-bottom:4px;color:var(--gold);font-size:11px;font-weight:700">Код з екрану (ТВ / комп'ютер):</div>
       <div style="display:flex;gap:6px;margin-bottom:12px">
-        <input class="sinp" id="rc" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="Напр. 4821…" style="border-color:${displayOk?'#30d158':'#777'};margin-bottom:0;flex:1;letter-spacing:.3em;font-size:16px" value="${room||''}">
+        <input class="sinp" id="rc" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="Напр. 4821…" oninput="rcVal=this.value" style="border-color:${displayOk?'#30d158':'#777'};margin-bottom:0;flex:1;letter-spacing:.3em;font-size:16px" value="${room||rcVal||''}">
         <button onclick="hostConnect()" style="background:linear-gradient(135deg,#e8b813,#d97a12);border:none;border-radius:var(--r-btn);padding:9px 16px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">🔗 Підключити</button>
       </div>
       <div style="color:#7dffa5;font-size:11px;text-align:center;margin-bottom:14px">Введіть назви команд та оберіть стартову</div>
@@ -660,3 +665,5 @@ function render(){
 }
 render();
 </script>
+</body>
+</html>
