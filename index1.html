@@ -129,6 +129,21 @@ html,body{height:100%;background:url('IMG_7885.PNG') center/cover no-repeat fixe
 .endnow{padding:6px 12px;background:rgba(255,69,58,.12);border:1px solid rgba(255,69,58,.4);border-radius:var(--r-btn);color:#ff8a80;font-size:10px;font-family:inherit;font-weight:700;cursor:pointer;white-space:nowrap;transition:transform .25s var(--ease),opacity .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease),background-color .25s var(--ease)}
 .endnow:hover{background:rgba(255,69,58,.28)}
 
+/* host control grids (responsive) */
+.agrid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:5px}
+.tgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:6px}
+@media (max-width:640px){
+  .agrid,.tgrid{grid-template-columns:1fr 1fr}
+  .abtn{padding:8px 7px}
+  .abtn span:last-child{font-size:12px !important}
+  .tbtn{padding:9px 4px;font-size:11px}
+  .body{flex-direction:column;gap:6px}
+  .tcol{width:100% !important;flex-direction:row}
+  .team{padding:6px 2px}
+  .wrong{padding:13px;font-size:14px}
+  .root{border-radius:0;min-height:100dvh}
+}
+
 /* ══ DISPLAY (TV) MODE — fullscreen, fluid sizing ══════════════════ */
 .tvroot{height:100vh;width:100vw;position:fixed;inset:0;background:linear-gradient(160deg,rgba(4,14,4,.94) 0%,rgba(9,38,9,.9) 50%,rgba(4,14,4,.94) 100%);display:flex;flex-direction:column;color:#fff;overflow:hidden}
 .tvhdr{display:flex;justify-content:space-between;align-items:center;padding:1.2vh 2.5vw;background:rgba(0,0,0,.35);backdrop-filter:blur(16px);border-bottom:1px solid var(--glass-bd);flex-shrink:0}
@@ -141,6 +156,7 @@ html,body{height:100%;background:url('IMG_7885.PNG') center/cover no-repeat fixe
 .tvcard{border-radius:1.1vw;display:flex;align-items:center;padding:1vh 1.4vw;transition:transform .5s var(--ease),opacity .5s var(--ease),border-color .5s var(--ease),box-shadow .5s var(--ease),background-color .5s var(--ease);backdrop-filter:blur(12px);perspective:600px}
 </style>
 <div id="app"></div>
+<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
 <script>
 const QS=[
   {q:"Слова-паразити які дратують людей?",a:[["Типу",30],["Коротше",29],["Лайливі слова",12],["Блін",9],["Ну",8],["Цей, цейво",5],["Капець",4],["Ага, угу",3]]},
@@ -175,12 +191,29 @@ let rPhase='play',rq=[],overlayOn=false,notif=null,popIdx=null;
 let startTeam=0,displayOk=false,waitHost=true,splashKey=null;
 let nT,pT,eT,wrT,spT,nrT;
 
-function setupBC(){try{bc=new BroadcastChannel('gs9');bc.onmessage=onMsg;bcOk=true;}catch(e){bcOk=false;}}
-function push(){if(!bc)return;bc.postMessage({t:'s',d:{screen,names,totals,qi,st,at,rv:[...revealed.entries()],el:[...elim],rs,rPhase,rq,overlayOn,notif,startTeam,maxQ,popIdx}});}
-function pushFlash(){if(bc)bc.postMessage({t:'flash'});}
-function onMsg(e){
-  const m=e.data;
+// ── Transport: BroadcastChannel (same device) + MQTT (cross-device) ──
+const myId=Math.random().toString(36).slice(2,10);
+let mq=null,room=null,mqOk=false;
+function setupBC(){try{bc=new BroadcastChannel('gs9');bc.onmessage=e=>handleMsg(e.data);bcOk=true;}catch(e){bcOk=false;}}
+function setupMQ(code,onReady){
+  if(typeof mqtt==='undefined')return; // CDN failed / offline: BC-only mode
+  room=String(code).trim();
+  if(mq){try{mq.end(true);}catch(e){}}
+  mq=mqtt.connect('wss://broker.emqx.io:8084/mqtt',{clientId:'ep_'+myId,keepalive:30,reconnectPeriod:2000});
+  mq.on('connect',()=>{mqOk=true;mq.subscribe('epytannia/'+room);if(onReady)onReady();render();});
+  mq.on('message',(t,payload)=>{try{const m=JSON.parse(payload.toString());if(m._f!==myId)handleMsg(m);}catch(e){}});
+  mq.on('close',()=>{mqOk=false;});
+}
+function send(o){
+  o._f=myId;
+  if(bc)bc.postMessage(o);
+  if(mq&&mq.connected&&room)mq.publish('epytannia/'+room,JSON.stringify(o));
+}
+function push(){send({t:'s',d:{screen,names,totals,qi,st,at,rv:[...revealed.entries()],el:[...elim],rs,rPhase,rq,overlayOn,notif,startTeam,maxQ,popIdx}});}
+function pushFlash(){send({t:'flash'});}
+function handleMsg(m){
   if(mode==='host'&&m.t==='ping'){displayOk=true;push();render();}
+  else if(mode==='display'&&m.t==='hello'){send({t:'ping'});}
   else if(mode==='display'&&m.t==='s'){applyState(m.d);}
   else if(mode==='display'&&m.t==='flash'){flashWrong();}
   else if(mode==='display'&&m.t==='gflash'){flashCorrect();}
@@ -220,7 +253,7 @@ function onCorrect(i){
   const pts=QS[qi].a[i][1];
   revealed.set(i,'team');popAt(i);rs[at]+=pts;sC();
   flashCorrect();
-  if(bc)bc.postMessage({t:'gflash'});
+  send({t:'gflash'});
   push();
   if(revealed.size>=QS[qi].a.length)setTimeout(doEnd,1000);
 }
@@ -315,7 +348,7 @@ function doEnd(){
     if(qi>=maxQ-1){
       screen='over';
       spawnConfetti();sFanfare();
-      if(bc)bc.postMessage({t:'confetti'});
+      send({t:'confetti'});
     }else{
       qi++;st=(st+1)%4;at=st;revealed=new Map();elim=new Set();rs=[0,0,0,0];rPhase='play';rq=[];
     }
@@ -330,7 +363,7 @@ function doFinishGame(){
   screen='over';overlayOn=false;notif=null;
   push();render();
   spawnConfetti();sFanfare();
-  if(bc)bc.postMessage({t:'confetti'});
+  send({t:'confetti'});
 }
 
 function doStart(){
@@ -341,7 +374,19 @@ function doStart(){
 function resetRound(){[eT,pT,nT,wrT,spT,nrT].forEach(t=>clearTimeout(t));revealed=new Map();elim=new Set();rs=[0,0,0,0];at=st;rPhase='play';rq=[];overlayOn=false;notif=null;popIdx=null;push();render();}
 function goSetup(){screen='setup';push();render();}
 function chooseHost(){mode='host';setupBC();ensureAmbient();render();}
-function chooseDisplay(){mode='display';setupBC();ensureAmbient();if(bc){bc.postMessage({t:'ping'});pingInt=setInterval(()=>{if(waitHost&&bc)bc.postMessage({t:'ping'});else clearInterval(pingInt);},2000);}render();}
+function chooseDisplay(){
+  mode='display';setupBC();ensureAmbient();
+  room=String(1000+Math.floor(Math.random()*9000)); // room code shown on TV
+  setupMQ(room);
+  send({t:'ping'});
+  pingInt=setInterval(()=>{if(waitHost)send({t:'ping'});else clearInterval(pingInt);},2000);
+  render();
+}
+function hostConnect(){
+  const e=document.getElementById('rc');
+  if(!e||!/^\d{4}$/.test(e.value.trim())){alert('Введіть 4-значний код з екрану (ТВ)');return;}
+  setupMQ(e.value.trim(),()=>{send({t:'hello'});});
+}
 
 // ── Ambient bokeh stage layer: created once, survives all re-renders ──
 function ensureAmbient(){
@@ -520,7 +565,10 @@ function render(){
       if(splashKey===spKey&&document.getElementById('sv1'))return; // splash already on screen — don't restart video
       splashKey=spKey;
       app.innerHTML=splashHTML(spKey==='wait'
-        ?`<div style="color:#ddd;font-size:clamp(15px,1.7vw,32px);text-align:center;line-height:1.8;text-shadow:0 2px 10px rgba(0,0,0,.8);animation:breathe 2.4s ease-in-out infinite">Очікуємо ведучого… відкрийте другу вкладку<br>та оберіть <strong style="color:#ff8a80">🎛️ Ведучий</strong></div>`
+        ?`<div style="text-align:center;text-shadow:0 2px 10px rgba(0,0,0,.8)">
+            <div style="color:#ddd;font-size:clamp(14px,1.6vw,30px);line-height:1.7;animation:breathe 2.4s ease-in-out infinite">Відкрийте гру на телефоні, оберіть <strong style="color:#ff8a80">🎛️ Ведучий</strong><br>та введіть код підключення:</div>
+            <div style="color:var(--gold);font-size:clamp(44px,6vw,120px);font-weight:800;letter-spacing:.4em;margin-top:1.5vh;text-shadow:0 0 3vw rgba(245,197,24,.55)">${room||''}</div>
+          </div>`
         :`<div style="color:#7dffa5;font-size:clamp(18px,2.2vw,44px);font-weight:700;text-shadow:0 2px 10px rgba(0,0,0,.8);animation:breathe 2.2s ease-in-out infinite">Готуємось до гри…</div>`);
       initSplashFade();return;
     }
@@ -541,8 +589,13 @@ function render(){
     const stLabel=names.map((n,i)=>`<button onclick="setStartTeam(${i})" style="background:${startTeam===i?`linear-gradient(135deg,${TC[i].p}dd,${TC[i].p}88)`:'rgba(0,0,0,.4)'};border:1px solid ${startTeam===i?TC[i].g:TC[i].p};border-radius:var(--r-btn);padding:7px 3px;color:${startTeam===i?'#fff':TC[i].g};font-size:11px;font-family:inherit;font-weight:700;cursor:pointer;transition:transform .25s var(--ease),opacity .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease),background-color .25s var(--ease);${startTeam===i?`box-shadow:0 0 12px ${TC[i].g}55`:''}">К${i+1}</button>`).join('');
     const qOpts=[1,2,5,QS.length].map(v=>`<button onclick="maxQ=${v};render()" style="background:${maxQ===v?'linear-gradient(135deg,#e8b813,#d97a12)':'rgba(0,0,0,.4)'};border:1px solid ${maxQ===v?'var(--gold)':'#555'};border-radius:var(--r-btn);padding:7px 6px;color:${maxQ===v?'#fff':'#aaa'};font-size:12px;font-family:inherit;cursor:pointer;font-weight:700;transition:transform .25s var(--ease),opacity .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease),background-color .25s var(--ease)">${v===QS.length?'Всі':v}</button>`).join('');
     app.innerHTML=`<div class="sroot"><div class="scard">
-      ${displayOk?`<div style="color:#55efc4;font-size:11px;margin-bottom:9px;text-align:center">📡 Екран підключено</div>`:bcOk?`<div style="color:#f39c12;font-size:11px;margin-bottom:9px;text-align:center">⚠️ Очікуємо підключення екрану…</div>`:`<div style="color:var(--muted);font-size:11px;margin-bottom:9px;text-align:center">Режим без синхронізації (одна вкладка)</div>`}
+      ${displayOk?`<div style="color:#55efc4;font-size:11px;margin-bottom:9px;text-align:center">📡 Екран підключено</div>`:room&&mqOk?`<div style="color:#f39c12;font-size:11px;margin-bottom:9px;text-align:center">🌐 Онлайн, шукаємо екран із кодом ${room}…</div>`:`<div style="color:var(--muted);font-size:11px;margin-bottom:9px;text-align:center">Екран не підключено. Введіть код з ТВ нижче, або відкрийте другу вкладку на цьому ж пристрої</div>`}
       <div style="color:var(--gold);font-size:1.6rem;text-align:center;margin-bottom:4px;font-weight:800">🎛️ Ведучий</div>
+      <div style="margin-bottom:4px;color:var(--gold);font-size:11px;font-weight:700">Код з екрану (ТВ / комп'ютер):</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px">
+        <input class="sinp" id="rc" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="Напр. 4821…" style="border-color:${displayOk?'#30d158':'#777'};margin-bottom:0;flex:1;letter-spacing:.3em;font-size:16px" value="${room||''}">
+        <button onclick="hostConnect()" style="background:linear-gradient(135deg,#e8b813,#d97a12);border:none;border-radius:var(--r-btn);padding:9px 16px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">🔗 Підключити</button>
+      </div>
       <div style="color:#7dffa5;font-size:11px;text-align:center;margin-bottom:14px">Введіть назви команд та оберіть стартову</div>
       ${names.map((n,i)=>`<label for="i${i}" style="display:block;color:${TC[i].g};font-weight:700;margin-bottom:2px;font-size:11px">Команда ${i+1}</label><input class="sinp" id="i${i}" name="team${i+1}" autocomplete="off" spellcheck="false" value="${n}" style="border-color:${TC[i].p}" oninput="names[${i}]=this.value" placeholder="Назва команди ${i+1}…">`).join('')}
       <div style="margin-top:10px;margin-bottom:4px;color:var(--gold);font-size:11px;font-weight:700">Яка команда починає першою?</div>
@@ -577,7 +630,7 @@ function render(){
         <button class="endnow" onclick="doFinishGame()">🏁 Завершити гру</button>
       </div>
       ${isPlay?`<div style="color:rgba(255,255,255,.42);font-size:10px;margin-bottom:4px;text-align:center">Оберіть активну команду (хід вручну):</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:6px">
+        <div class="tgrid">
           ${[0,1,2,3].map(i=>{const isAct=at===i,isEl=elim.has(i);return`<button onclick="selectTeam(${i})" ${isEl?'disabled':''} class="tbtn" style="background:${isAct?`linear-gradient(135deg,${TC[i].p}ee,${TC[i].p}99)`:isEl?'rgba(25,25,25,.5)':'rgba(20,20,20,.6)'};border-color:${isAct?TC[i].g:isEl?'#333':TC[i].p};color:${isAct?'#fff':isEl?'#333':TC[i].g};opacity:${isEl?.38:1};cursor:${isEl?'not-allowed':'pointer'};${isAct?`box-shadow:0 0 9px ${TC[i].g}55`:''}">${isEl?'❌ ':isAct?'▶ ':''}${names[i]}<div style="font-size:9px;color:${isAct?'var(--gold)':TC[i].g}">${totals[i]+rs[i]}б</div></button>`;}).join('')}
         </div>`:''}
       ${isAllWrong?`<div style="background:rgba(255,69,58,.08);border:1px solid rgba(255,69,58,.4);border-radius:10px;padding:8px 10px;margin-bottom:6px;text-align:center">
@@ -595,7 +648,7 @@ function render(){
         <div style="color:#7dffa5;font-size:11px;font-weight:700;margin-bottom:5px">✅ Всі відповіді відкрито! "${Q.a[lIdx][0]}": ${Q.a[lIdx][1]}б</div>
         <button onclick="doEnd()" style="background:linear-gradient(135deg,#1a8a3a,#30d158);border:none;border-radius:var(--r-btn);padding:7px 18px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">✅ Завершити раунд</button>
       </div>`:''}
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:5px">
+      <div class="agrid">
         ${Q.a.map(([txt,pts],i)=>{const isRev=revealed.has(i),d=isRev||!isPlay;return`<button onclick="onCorrect(${i})" ${d?'disabled':''} class="abtn${isRev?' adone':''}"><span style="color:${isRev?'#55efc4':'var(--gold)'};font-size:10px;font-weight:800">${isRev?'✓':'#'+(i+1)} ${pts}б</span><span style="font-size:11px;text-decoration:${isRev?'line-through':'none'}">${txt}</span></button>`;}).join('')}
       </div>
       <div style="display:flex;gap:5px">
